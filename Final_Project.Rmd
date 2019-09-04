@@ -1,0 +1,194 @@
+---
+title: "Group 205 Final Project"
+author: "Seonhye Yang"
+date: "8/3/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+library(readr, warn.conflicts = F, quietly = T)
+library(plotly, warn.conflicts = F, quietly = T)
+```
+
+**INTRODUCTION**
+
+The data we are going to use involves prices of different stocks (Microsoft, Apple and Tesla). The important factor about these stock data sets is the price of stock for different days. All of the datasets include a Date (day), Open (initial price when market opens), High (highest price during the day), Low (lowest price during the day), Close (closing price when market closes), Adj.close (final price of a stock at the end of the day when banks unload their positions and adjusted price count for this) and volume (number of stocks sold in one day). The datasets are interesting because they give us different information about stock prices during the day. Stocks are time sensitive which means the price is constantly changing throughout the day before the market closes. Determining the future value of a company’s stock is important because it could yield a significant amount of profit. One way to accomplish this is to use a linear regression model. 
+
+**METHOD**
+
+For this project, we split the models into 3 month intervals for accuracy. Specifically, the smaller the input date range, the more accurate we will be since we are working on a smaller time scale (smaller noise).
+
+The ANOVA test compares the predictive power of our AIC-selected models the predictive power of the full model. It is important to avoid models with too many variables because it may result in overfitting. For this project, we did not take out any outliers or influential points because these points indicate future movements in the market (outliers are common in trading). To select our model we followed a standard practice method. After we had segmented our data, we then went to create a full model for every segment or split. With this full model in hand, we applied a backwards AIC to the full model for each split. This is important, as it crafts a custom model for each split of data we have. This means that we can correctly fit our model depending on market conditions. For example, in times of high volume trading, where the price was moved simply by amount of trades, and not signals such as news, we can see that the step AIC included volume and price. But in more news oriented situations, the open and high price were included, as they represent the current state of the stock, and are more influential to the future value. With a model in hand for each spilt, we can then perform validation, and predictions with our model. 
+
+Our goal is to create a model that can predict the stock price for the following day. If you look at the dataset of MSFT_stock (Microsoft) and AAPL_stock (Apple), there’s a column called “Adj.close” which stands for Adjusted Close (this is the final stock price at the end of the day). Our model predicts the final stock for the following day and in order to achieve this, we shifted up the Adj.close by one day because we want to predict the stock price for the following day. To be specific, if Adj.close is $350 on the date 2018-01-03, we would place $350 on the date 2018-01-02 in the new column, Target, and vice versa. 
+
+
+```{r}
+generateData <- function(dataRaw, parts=60) {
+  # Create target column
+  dataRaw$Target <- dataRaw$Adj.Close
+  # Shift target column
+  for (i in 1:nrow(dataRaw) - 1){
+    dataRaw$Target[i] = dataRaw$Adj.Close[i + 1]
+  }
+  # Remove date column
+  dataNoDate <- within(dataRaw, rm("Date"))
+  # Split the data table
+  splitData <- split(dataNoDate, rep(1:ceiling(nrow(dataNoDate)/parts), each=parts, length.out=nrow(dataNoDate)))
+  return(splitData)
+}
+
+MSFT <- read.csv("MSFT.csv")
+head(MSFT)
+msftSplit <-generateData(MSFT)
+head(msftSplit[1])
+
+
+AAPL <- read.csv("AAPL.csv")
+aaplSplit <-generateData(AAPL)
+
+TSLA <- read.csv("TSLA.csv")
+tslaSplit <-generateData(TSLA)
+
+```
+
+```{r}
+generateModels <- function(inputData) {
+  # Make an empty list
+  ret <- c()
+  retOrig <- c()
+  # For every split in our dataset
+  for (i in 1:length(inputData)) {
+    # Create the full model for this split
+    model <- lm(Target ~ ., data = inputData[[i]])
+    retOrig <- c(retOrig, list(model))
+    # Run step to find what the best model for this split is, and add it to the list
+    stepModel <- step(model, direction = "backward", trace = FALSE)
+    ret <- c(ret, list(stepModel))
+  }
+  # Return the list
+  v <- list(initial=retOrig, step=ret)
+  return(v)
+}
+
+
+modelsMsft <- generateModels(msftSplit)
+modelsAapl <- generateModels(aaplSplit)
+modelsTsla <- generateModels(tslaSplit)
+```
+
+```{r}
+generateAnova <- function(inputmodels){
+  for (i in 1:length(inputmodels$step)) {
+    print(anova(inputmodels$initial[[i]], inputmodels$step[[i]]))
+  }
+}
+```
+
+#### MSFT Anova
+```{r}
+generateAnova(modelsMsft)
+```
+
+#### AAPL Anova
+```{r}
+generateAnova(modelsAapl)
+```
+Looking at the anova test, Target ~ High + Low + Close + Adj.Close + Volume is a good model since it has a pvalue less than 0.25. 
+
+#### TSLA Anova
+```{r}
+generateAnova(modelsTsla)
+```
+
+```{r}
+generateResiduals <- function(madeModels, name) {
+  par(mfrow=c(1,length(madeModels$step)))
+  for (i in 1:length(madeModels$step)) {
+    plot(fitted(madeModels$step[[i]]), resid(madeModels$step[[i]]), main = paste("Fitted vs Residuals", i, name), col = "dodgerblue1", xlab = paste("Split", i), ylab = paste("Split", i))
+    abline(h = 0, col = "firebrick1", lwd = 2)
+  }
+}
+
+generateResiduals(modelsMsft, "MSFT")
+generateResiduals(modelsAapl, "AAPL")
+generateResiduals(modelsTsla, "TSLA")
+
+generateQQ <- function(madeModels, name) {
+  par(mfrow=c(1,length(madeModels$step)))
+  for (i in 1:length(madeModels$step)) {
+    qqnorm(resid(madeModels$step[[i]]), col = "dodgerblue1", main = paste("Normal Q-Q", i, name))
+    qqline(resid(madeModels$step[[i]]), lty = 2, lwd = 2, col = "firebrick1")
+  }
+}
+
+generateQQ(modelsMsft, "MSFT")
+generateQQ(modelsAapl, "AAPL")
+generateQQ(modelsTsla, "TLSA")
+
+doShapiro <- function(madeModels, name) {
+  print(paste(name, "Shapiro tests"))
+  for (i in 1:length(madeModels$step)) {
+    print(paste("Split", i))
+    print(shapiro.test(resid(madeModels$step[[i]])))
+  }
+}
+```
+
+```{r}
+doShapiro(modelsMsft, "MSFT")
+```
+
+```{r}
+doShapiro(modelsAapl, "AAPL")
+```
+
+```{r}
+doShapiro(modelsTsla, "TSLA")
+```
+
+**RESULTS**
+
+The anova tests for MSFT all have pvalue greater than 0.05. If we made the rejection level alpha = 0.05, we'd end up not rejecting the null hypothesis. Instead, we choose to pick 2 models with the lowest pvalues. For instance with MSFT, we should choose Target ~ Low + Adj.Close and Target ~ Adj.Close because they have the lowest pvalues (0.5114 and 0.5175 respectively). We do this because our data has high noise so getting exact anova value is difficult. Same as before, for AAPL, we choose 2 models with the lowest pvalue which are Target ~ High + Low + Close + Adj.Close + Volume and Target ~ Open + Low + Adj.Close (pvalues 0.2174 and 0.483 respectively). Same as before, for TSLA, we choose 2 models with the lowest pvalue which are Target ~ Open + High + Close + Volume and Target ~ Close + Volume (pvalues 0.4858 and 0.6389 respectively).
+
+In addition, looking at the fitted vs residuals for MSFT, AAPL and TSLA, none of the diagnostic plots seem to violate normality. This means that during that time, the market was behaving in a linear way. In the future, we could use this information to decide whether or not our model should be used to trading. Looking at the Normal Q-Q for MSFT, AAPL and TSLA, Normal Q-Q 1 MSFT, Normal Q-Q 7 AAPL and Normal Q-Q 7 TSLA seem to violate normality. This means that during that period, the data points were not normally distributed. However, it's really hard to judge constant variance and normality by looking at these diagnostic plots. Therefore, we performed tests that could give us the pvalue and set an appropriate significant level for rejection.
+
+Looking at the Shapiro.Wilko test:
+
+1. For MSFT at alpha level 0.05, 1st, 5th and 7th model does not violate normality. 
+2. For AAPL, the pvalues are larger than the previous one, so we'll use a larger signifigance level. If we use alpla = 0.2, the 1st, 5th and 6th models do not violate normality.
+3. For TSLA, if we use signifigance level 0.05, the 1st, 3rd and 4th model do not violate normality. 
+
+**DISCUSSION**
+
+The models generated by model selection are useful because the models give a general indication on whether a stock will go up or down. Using thr data, a trader would be able to make an informed decision on whether or not to buy a stock based on what it will do in the future. In the future, we can improve the models by testing it on larger datasets that include economic downturns as well, specifically the 2008 recession and 1999 dot com bubble. Testing on datasets like that would show us that the model can operate in periods of high volatility and uncertainty. If our model shows an upward trend, you buy because the methodology is buy low sell high. And if our model shows a downward trend, you sell because it’s going to lose value. 
+
+**APPENDIX**
+
+The following are full size charts as presented in the report for easier viewing.
+```{r}
+generateResiduals <- function(madeModels, name) {
+  for (i in 1:length(madeModels$step)) {
+    plot(fitted(madeModels$step[[i]]), resid(madeModels$step[[i]]), main = paste("Fitted vs Residuals", i, name), col = "dodgerblue1", xlab = paste("Split", i), ylab = paste("Split", i))
+    abline(h = 0, col = "firebrick1", lwd = 2)
+  }
+}
+
+generateResiduals(modelsMsft, "MSFT")
+generateResiduals(modelsAapl, "AAPL")
+generateResiduals(modelsTsla, "TSLA")
+
+generateQQ <- function(madeModels, name) {
+  for (i in 1:length(madeModels$step)) {
+    qqnorm(resid(madeModels$step[[i]]), col = "dodgerblue1", main = paste("Normal Q-Q", i, name))
+    qqline(resid(madeModels$step[[i]]), lty = 2, lwd = 2, col = "firebrick1")
+  } 
+}
+
+generateQQ(modelsMsft, "MSFT")
+generateQQ(modelsAapl, "AAPL")
+generateQQ(modelsTsla, "TLSA")
+
+```
